@@ -63,14 +63,22 @@
       }
     ]
   },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rifanid98/vs-code-json-formatter"
+  },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "publish": "vsce publish"
   },
   "devDependencies": {
     "@types/node": "^18.19.130",
     "@types/vscode": "^1.120.0",
+    "@vscode/vsce": "^3.9.1",
     "typescript": "^5.9.3"
   }
 }
