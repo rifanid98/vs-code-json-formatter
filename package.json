@@ -1,0 +1,76 @@
+{
+  "name": "json-formatter",
+  "displayName": "JSON Formatter",
+  "description": "Side panel JSON formatter with expand, collapse, and strip-quotes",
+  "publisher": "adnin",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "categories": [
+    "Formatters"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "json-formatter-container",
+          "title": "JSON Formatter",
+          "icon": "$(bracket-dot)"
+        }
+      ]
+    },
+    "views": {
+      "json-formatter-container": [
+        {
+          "type": "webview",
+          "id": "jsonFormatter.panel",
+          "name": "JSON Formatter"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "jsonFormatter.collapse",
+        "title": "JSON Formatter: Collapse (Minify)"
+      },
+      {
+        "command": "jsonFormatter.expand",
+        "title": "JSON Formatter: Expand (Pretty Print)"
+      },
+      {
+        "command": "jsonFormatter.stripQuotes",
+        "title": "JSON Formatter: Unescape (\\\" → \")"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "jsonFormatter.collapse",
+        "key": "ctrl+shift+-",
+        "mac": "cmd+shift+-"
+      },
+      {
+        "command": "jsonFormatter.expand",
+        "key": "ctrl+shift+=",
+        "mac": "cmd+shift+="
+      },
+      {
+        "command": "jsonFormatter.stripQuotes",
+        "key": "ctrl+shift+up",
+        "mac": "cmd+shift+up"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.130",
+    "@types/vscode": "^1.120.0",
+    "typescript": "^5.9.3"
+  }
+}
