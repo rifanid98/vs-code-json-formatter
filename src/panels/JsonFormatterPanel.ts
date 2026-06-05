@@ -767,25 +767,69 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
     }
   }
 
-  // Unescape button — removes one level of escaping per click (outer → inner)
+  // Walk a parsed JSON value and parse any string values that are valid JSON objects/arrays.
+  // Returns { changed, value } — only the immediate children are inspected (one level per call).
+  function unescapeJsonStrings(data) {
+    if (Array.isArray(data)) {
+      let changed = false;
+      const value = data.map(item => {
+        const r = unescapeValue(item);
+        if (r.changed) changed = true;
+        return r.value;
+      });
+      return { changed, value };
+    }
+    if (data !== null && typeof data === 'object') {
+      let changed = false;
+      const value = {};
+      for (const [k, v] of Object.entries(data)) {
+        const r = unescapeValue(v);
+        if (r.changed) changed = true;
+        value[k] = r.value;
+      }
+      return { changed, value };
+    }
+    return { changed: false, value: data };
+  }
+
+  function unescapeValue(v) {
+    if (typeof v === 'string') {
+      const t = v.trim();
+      if (t.startsWith('{') || t.startsWith('[')) {
+        try { return { changed: true, value: JSON.parse(v) }; } catch (_) {}
+      }
+    } else if (v !== null && typeof v === 'object') {
+      return unescapeJsonStrings(v);
+    }
+    return { changed: false, value: v };
+  }
+
+  // Unescape button — one level per click (outer → inner)
   btnUnescape.addEventListener('click', () => {
     const raw = input.value.trim();
-    let handled = false;
+    if (!raw) return;
+    let newValue = raw;
 
-    // Strategy 1: If the entire input is a JSON-encoded string, unwrap the outer layer
     try {
       const parsed = JSON.parse(raw);
       if (typeof parsed === 'string') {
-        input.value = parsed;
-        handled = true;
+        // Entire input is a JSON-encoded string → unwrap and pretty-print if inner is valid JSON
+        try {
+          newValue = JSON.stringify(JSON.parse(parsed), null, 2);
+        } catch (_) {
+          newValue = parsed;
+        }
+      } else if (parsed !== null && typeof parsed === 'object') {
+        // Walk the tree and parse string values that are JSON objects/arrays
+        const result = unescapeJsonStrings(parsed);
+        if (result.changed) newValue = JSON.stringify(result.value, null, 2);
       }
-    } catch (_) {}
-
-    // Strategy 2: Remove exactly one backslash before each escaped quote
-    if (!handled) {
-      input.value = input.value.replace(/\\"/g, '"');
+    } catch (_) {
+      // Not valid JSON — strip one backslash level as a last resort
+      newValue = raw.replace(/\\"/g, '"');
     }
 
+    input.value = newValue;
     parseAndRender();
     updateUnescapeLevel();
   });
