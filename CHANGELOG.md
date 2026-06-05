@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.1.3] — 2026-06-05
+
+### Changed
+
+- **Unescape — Smarter Level-by-Level Algorithm** — Each click of ⟲ Unescape
+  now walks the parsed JSON tree and replaces any string value that is a valid
+  JSON object or array with its parsed counterpart, leaving the rest of the
+  document untouched. One escape layer is peeled per click (outer → inner).
+
+### Fixed
+
+- Unescape no longer corrupts valid JSON when the input is an object or array
+  containing escaped string values. The previous fallback blindly stripped all
+  `\"` sequences, which produced invalid JSON in most real-world cases.
+
+---
+
 ## [0.2.0] — 2026-05-28
 
 ### Added
