@@ -364,8 +364,11 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
 <div id="toolbar">
   <button id="btn-expand"   title="Expand / Pretty-print">▶ Expand</button>
   <button id="btn-collapse" title="Collapse / Minify">◀ Collapse</button>
-  <button id="btn-unescape" title='Unescape one level at a time (outer → inner)'>⟲ Unescape</button><span id="unescape-level" class="level-badge"></span>
-  <button id="btn-wrap"     title="Toggle word wrap">⇌ Wrap</button>
+  <button id="btn-unescape"    title='Unescape one level at a time (outer → inner)'>⟲ Unescape</button><span id="unescape-level" class="level-badge"></span>
+  <button id="btn-stringify"      title="Stringify mode — auto-convert pasted JSON to an escaped string literal">" Str</button>
+  <button id="btn-unstringify"     title="Unstringify all levels at once — recursively convert all nested escaped JSON strings">" UnStr</button>
+  <button id="btn-unstringify-all" title="Unstringify one level per click — press repeatedly to go level by level">" UnStr↑</button>
+  <button id="btn-wrap"        title="Toggle word wrap">⇌ Wrap</button>
   <button id="btn-copy"     title="Copy input to clipboard">⎘ Copy</button>
   <button id="btn-clear"    title="Clear all">✕ Clear</button>
   <button id="btn-find"     title="Find &amp; Replace (Ctrl+F / Ctrl+H)">⌕ Find</button>
@@ -427,7 +430,10 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
   const btnCollapse    = document.getElementById('btn-collapse');
   const btnUnescape    = document.getElementById('btn-unescape');
   const unescapeLevel  = document.getElementById('unescape-level');
-  const btnWrap        = document.getElementById('btn-wrap');
+  const btnStringify   = document.getElementById('btn-stringify');
+  const btnUnstringify    = document.getElementById('btn-unstringify');
+  const btnUnstringifyAll = document.getElementById('btn-unstringify-all');
+  const btnWrap           = document.getElementById('btn-wrap');
   const btnCopy        = document.getElementById('btn-copy');
   const btnClear       = document.getElementById('btn-clear');
   const btnFind        = document.getElementById('btn-find');
@@ -511,6 +517,8 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
     const lineHeight = parseFloat(getComputedStyle(input).lineHeight) || 20;
     input.scrollTop = linesBefore * lineHeight - input.clientHeight / 2;
     findCount.textContent = (findCurrent + 1) + ' / ' + findMatches.length;
+    // Restore focus to find bar so typing continues without interruption
+    if (findBarOpen()) findInput.focus();
   }
 
   function clearHighlights() {
@@ -826,7 +834,7 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
       }
     } catch (_) {
       // Not valid JSON — strip one backslash level as a last resort
-      newValue = raw.replace(/\\"/g, '"');
+      newValue = raw.replace(/\\\\"/g, '"');
     }
 
     input.value = newValue;
@@ -838,6 +846,116 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
   btnCopy.addEventListener('click', () => {
     if (input.value) {
       navigator.clipboard.writeText(input.value).catch(() => {});
+    }
+  });
+
+  // Stringify mode toggle — when active, pasting valid JSON auto-converts it to an escaped string literal
+  let stringifyMode = false;
+  btnStringify.addEventListener('click', () => {
+    stringifyMode = !stringifyMode;
+    btnStringify.classList.toggle('btn-active', stringifyMode);
+  });
+
+  input.addEventListener('paste', e => {
+    if (!stringifyMode) return;
+    const text = (e.clipboardData || window.clipboardData).getData('text');
+    if (!text) return;
+    const trimmed = text.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return;
+    try {
+      const parsed = JSON.parse(trimmed);
+      e.preventDefault();
+      const stringified = JSON.stringify(JSON.stringify(parsed));
+      const start = input.selectionStart;
+      const end   = input.selectionEnd;
+      input.value = input.value.substring(0, start) + stringified + input.value.substring(end);
+      input.selectionStart = input.selectionEnd = start + stringified.length;
+      parseAndRender();
+      updateUnescapeLevel();
+    } catch (_) {}
+  });
+
+  // Recursively parse any string value that is valid JSON (all levels)
+  function deepUnstringify(value) {
+    if (typeof value === 'string') {
+      try { return deepUnstringify(JSON.parse(value)); } catch (_) {}
+      return value;
+    }
+    if (Array.isArray(value)) return value.map(deepUnstringify);
+    if (value !== null && typeof value === 'object') {
+      const out = {};
+      for (const [k, v] of Object.entries(value)) out[k] = deepUnstringify(v);
+      return out;
+    }
+    return value;
+  }
+
+  // Shared: try multiple strategies to parse raw input into a JS value
+  function tryParse(raw) {
+    try { return JSON.parse(raw); } catch (_) {}
+    try { return JSON.parse(raw.replace(/\\\\(.)/g, '$1')); } catch (_) {}
+    if (raw.startsWith('"') && raw.endsWith('"')) {
+      const inner = raw.slice(1, -1);
+      try { return JSON.parse(inner); } catch (_) {}
+      try { return JSON.parse(inner.replace(/\\\\(.)/g, '$1')); } catch (_) {}
+    }
+    return undefined;
+  }
+
+  // Unstringify all levels at once
+  btnUnstringify.addEventListener('click', () => {
+    const raw = input.value.trim();
+    if (!raw) return;
+    const parsed = tryParse(raw);
+    if (parsed === undefined) return;
+    input.value = JSON.stringify(deepUnstringify(parsed), null, 2);
+    parseAndRender();
+    updateUnescapeLevel();
+  });
+
+  // Unstringify one level per click — traverses full tree, parses each string once
+  btnUnstringifyAll.addEventListener('click', () => {
+    const raw = input.value.trim();
+    if (!raw) return;
+    const parsed = tryParse(raw);
+    if (parsed === undefined) return;
+
+    // Outer string literal: unwrap one level
+    if (typeof parsed === 'string') {
+      try {
+        input.value = JSON.stringify(JSON.parse(parsed), null, 2);
+      } catch (_) {
+        input.value = parsed;
+      }
+      parseAndRender();
+      updateUnescapeLevel();
+      return;
+    }
+
+    // If tryParse used a fallback (raw wasn't clean JSON), always write the result
+    let rawParseable = true;
+    try { JSON.parse(raw); } catch (_) { rawParseable = false; }
+
+    // Object/array: traverse entire tree, parse each string value once (no recursion into result)
+    let changed = false;
+    function oneLevelDeep(val) {
+      if (typeof val === 'string') {
+        try { const p = JSON.parse(val); changed = true; return p; } catch (_) {}
+        return val;
+      }
+      if (Array.isArray(val)) return val.map(oneLevelDeep);
+      if (val !== null && typeof val === 'object') {
+        const out = {};
+        for (const [k, v] of Object.entries(val)) out[k] = oneLevelDeep(v);
+        return out;
+      }
+      return val;
+    }
+    const result = oneLevelDeep(parsed);
+    if (changed || !rawParseable) {
+      input.value = JSON.stringify(result, null, 2);
+      parseAndRender();
+      updateUnescapeLevel();
     }
   });
 
