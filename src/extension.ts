@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { JsonFormatterPanel } from './panels/JsonFormatterPanel';
 
 export function activate(context: vscode.ExtensionContext): void {
-    const provider = new JsonFormatterPanel();
+    const provider = new JsonFormatterPanel(context.extensionUri);
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(

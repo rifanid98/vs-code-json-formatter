@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.5.0] — 2026-07-22
+
+### Added
+
+- **CodeMirror-Powered Input Editor** — The plain input textarea is now a real
+  CodeMirror 6 editor, giving the input pane genuine editor behavior instead
+  of bare-textarea limitations.
+- **Tab / Shift+Tab Indent** — Tab indents the current line or selected block
+  by 2 spaces instead of moving focus away; Shift+Tab dedents. Indentation is
+  now JSON-aware (auto-indent on new lines, bracket matching).
+- **Multi-Cursor: Add Cursor Above/Below** — `Cmd+Option+Up` / `Cmd+Option+Down`
+  (`Ctrl+Alt+Up/Down` on Windows/Linux) adds an additional cursor on the line
+  above or below, matching common code-editor multi-cursor behavior.
+- **Select Next Occurrence** — `Cmd+G` / `Ctrl+G` selects the word under the
+  cursor, then adds the next matching occurrence to the selection each time
+  it's pressed again — useful for editing repeated keys/values across the
+  document at once.
+
+### Changed
+
+- Webview script is now bundled via esbuild (`media/webview.js`) instead of
+  being inlined directly in the panel HTML, to support the CodeMirror
+  dependency.
+
+---
+
 ## [0.1.3] — 2026-06-05
 
 ### Changed

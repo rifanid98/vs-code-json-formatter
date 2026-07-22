@@ -4,25 +4,34 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
     public static readonly viewType = 'jsonFormatter.panel';
     private _view?: vscode.WebviewView;
 
+    constructor(private readonly _extensionUri: vscode.Uri) {}
+
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
         _context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken
     ): void {
         this._view = webviewView;
-        webviewView.webview.options = { enableScripts: true };
-        webviewView.webview.html = this._getHtml();
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [vscode.Uri.joinPath(this._extensionUri, 'media')],
+        };
+        webviewView.webview.html = this._getHtml(webviewView.webview);
     }
 
     public postMessage(message: { type: string }): void {
         this._view?.webview.postMessage(message);
     }
 
-    private _getHtml(): string {
+    private _getHtml(webview: vscode.Webview): string {
+        const scriptUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'webview.js')
+        );
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource};">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>JSON Formatter</title>
 <style>
@@ -164,31 +173,22 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
     background: var(--vscode-sash-hoverBorder, #007fd4);
   }
 
-  /* ── Input textarea ─────────────────────────────────────────────────── */
+  /* ── Input editor (CodeMirror) ─────────────────────────────────────── */
 
-  #input {
+  #input-editor {
     flex: 1;
-    width: 100%;
-    resize: none;
-    border: none;
-    outline: none;
-    padding: 6px 8px;
-    background: var(--vscode-input-background, #1e1e1e);
-    color: var(--vscode-input-foreground, #d4d4d4);
-    font-family: inherit;
-    font-size: inherit;
-    line-height: 1.5;
-    overflow-x: auto;
+    min-height: 0;
+    display: flex;
   }
 
-  #input.wrap-on {
-    overflow-x: hidden;
-    white-space: pre-wrap;
-    word-wrap: break-word;
+  #input-editor .cm-editor {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
   }
 
-  #input::placeholder {
-    color: var(--vscode-input-placeholderForeground, #666);
+  #input-editor .cm-scroller {
+    overflow: auto;
   }
 
   /* ── Tree body ─────────────────────────────────────────────────────── */
@@ -396,7 +396,7 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
     <span class="section-title">Input</span>
   </div>
   <div class="section-body focused" id="input-body">
-    <textarea id="input" wrap="off" spellcheck="false" placeholder="Paste JSON here…"></textarea>
+    <div id="input-editor"></div>
   </div>
 </div>
 
@@ -414,577 +414,7 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
 
 </div>
 
-<script>
-(function () {
-  const inputSection   = document.getElementById('input-section');
-  const treeSection    = document.getElementById('tree-section');
-  const inputHeader    = document.getElementById('input-header');
-  const treeHeader     = document.getElementById('tree-header');
-  const inputBody      = document.getElementById('input-body');
-  const treeBody       = document.getElementById('tree-body');
-  const panelsContainer = document.getElementById('panels-container');
-  const sash           = document.getElementById('sash');
-  const input          = document.getElementById('input');
-  const tree           = document.getElementById('tree');
-  const btnExpand      = document.getElementById('btn-expand');
-  const btnCollapse    = document.getElementById('btn-collapse');
-  const btnUnescape    = document.getElementById('btn-unescape');
-  const unescapeLevel  = document.getElementById('unescape-level');
-  const btnStringify   = document.getElementById('btn-stringify');
-  const btnUnstringify    = document.getElementById('btn-unstringify');
-  const btnUnstringifyAll = document.getElementById('btn-unstringify-all');
-  const btnWrap           = document.getElementById('btn-wrap');
-  const btnCopy        = document.getElementById('btn-copy');
-  const btnClear       = document.getElementById('btn-clear');
-  const btnFind        = document.getElementById('btn-find');
-  const findBar        = document.getElementById('find-bar');
-  const findInput      = document.getElementById('find-input');
-  const replaceInput   = document.getElementById('replace-input');
-  const findCount      = document.getElementById('find-count');
-  const btnPrev        = document.getElementById('btn-prev');
-  const btnNext        = document.getElementById('btn-next');
-  const btnReplace     = document.getElementById('btn-replace');
-  const btnReplaceAll  = document.getElementById('btn-replace-all');
-
-  let lastFocus = 'input';
-  let debounceTimer = null;
-
-  // ── Find & Replace state ──────────────────────────────────────────────
-  let findMatches = [];   // [{start, end}]
-  let findCurrent = -1;
-
-  function findBarOpen() {
-    return findBar.classList.contains('open');
-  }
-
-  btnFind.addEventListener('click', () => {
-    const wasOpen = findBarOpen();
-    findBar.classList.toggle('open');
-    if (!wasOpen) {
-      findInput.focus();
-      findInput.select();
-      runFind();
-    } else {
-      clearHighlights();
-      findMatches = [];
-      findCurrent = -1;
-      findCount.textContent = '';
-    }
-  });
-
-  // Close find bar with Escape
-  findBar.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { btnFind.click(); input.focus(); }
-    if (e.key === 'Enter' && e.target === findInput) {
-      e.shiftKey ? stepMatch(-1) : stepMatch(1);
-    }
-  });
-
-  // Toggle with Ctrl+F / Ctrl+H (and Cmd equivalents)
-  document.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'h')) {
-      e.preventDefault();
-      btnFind.click();
-    }
-  });
-
-  findInput.addEventListener('input', () => { runFind(); });
-
-  function runFind() {
-    clearHighlights();
-    findMatches = [];
-    findCurrent = -1;
-    const needle = findInput.value;
-    if (!needle) { findCount.textContent = ''; return; }
-    const text = input.value;
-    let idx = 0;
-    while ((idx = text.indexOf(needle, idx)) !== -1) {
-      findMatches.push({ start: idx, end: idx + needle.length });
-      idx += needle.length;
-    }
-    findCount.textContent = findMatches.length + ' found';
-    if (findMatches.length) stepMatch(1);
-  }
-
-  function stepMatch(dir) {
-    if (!findMatches.length) return;
-    findCurrent = (findCurrent + dir + findMatches.length) % findMatches.length;
-    const m = findMatches[findCurrent];
-    input.focus();
-    input.setSelectionRange(m.start, m.end);
-    // Scroll the textarea to the match
-    const linesBefore = input.value.substring(0, m.start).split('\\n').length - 1;
-    const lineHeight = parseFloat(getComputedStyle(input).lineHeight) || 20;
-    input.scrollTop = linesBefore * lineHeight - input.clientHeight / 2;
-    findCount.textContent = (findCurrent + 1) + ' / ' + findMatches.length;
-    // Restore focus to find bar so typing continues without interruption
-    if (findBarOpen()) findInput.focus();
-  }
-
-  function clearHighlights() {
-    // No DOM highlights needed — textarea selection is the highlight
-  }
-
-  btnPrev.addEventListener('click', () => stepMatch(-1));
-  btnNext.addEventListener('click', () => stepMatch(1));
-
-  btnReplace.addEventListener('click', () => {
-    if (findCurrent < 0 || !findMatches.length) return;
-    const m = findMatches[findCurrent];
-    const rep = replaceInput.value;
-    input.value = input.value.substring(0, m.start) + rep + input.value.substring(m.end);
-    parseAndRender();
-    runFind();
-  });
-
-  btnReplaceAll.addEventListener('click', () => {
-    const needle = findInput.value;
-    if (!needle) return;
-    const rep = replaceInput.value;
-    input.value = input.value.split(needle).join(rep);
-    parseAndRender();
-    runFind();
-  });
-
-  // ── Accordion toggle ─────────────────────────────────────────────────
-  function toggleSection(section) {
-    const collapsed = section.classList.toggle('collapsed');
-    section.classList.toggle('expanded', !collapsed);
-  }
-
-  inputHeader.addEventListener('click', () => { toggleSection(inputSection); setFocus('input'); });
-  treeHeader.addEventListener('click',  () => { toggleSection(treeSection);  setFocus('tree'); });
-
-  // ── Sash drag to resize ───────────────────────────────────────────────
-  let sashDragging = false;
-  let sashStartY = 0;
-  let sashStartH = 0;
-
-  sash.addEventListener('mousedown', e => {
-    sashDragging = true;
-    sashStartY = e.clientY;
-    sashStartH = inputBody.getBoundingClientRect().height;
-    sash.classList.add('dragging');
-    e.preventDefault();
-  });
-
-  document.addEventListener('mousemove', e => {
-    if (!sashDragging) return;
-    const delta = e.clientY - sashStartY;
-    const containerH = panelsContainer.getBoundingClientRect().height;
-    const sashH = 4;
-    const headerH = 22 * 2 + sashH;
-    const available = containerH - headerH;
-    const newH = Math.max(40, Math.min(available - 40, sashStartH + delta));
-    inputSection.style.flex = 'none';
-    inputSection.style.height = newH + 'px';
-    treeSection.style.flex = '1';
-    treeSection.style.height = '';
-  });
-
-  document.addEventListener('mouseup', () => {
-    if (!sashDragging) return;
-    sashDragging = false;
-    sash.classList.remove('dragging');
-  });
-
-  // ── Focus tracking ────────────────────────────────────────────────────
-  inputSection.addEventListener('mousedown', () => setFocus('input'));
-  treeSection.addEventListener('mousedown',  () => setFocus('tree'));
-  input.addEventListener('focus', () => setFocus('input'));
-
-  function setFocus(pane) {
-    lastFocus = pane;
-    inputBody.classList.toggle('focused', pane === 'input');
-    treeBody.classList.toggle('focused',  pane === 'tree');
-  }
-
-  // Live parse on input (debounced 300ms)
-  input.addEventListener('input', () => {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      parseAndRender();
-      updateUnescapeLevel();
-    }, 300);
-  });
-
-  function parseAndRender() {
-    tree.innerHTML = '';
-    const raw = input.value.trim();
-    if (!raw) return;
-    try {
-      const data = JSON.parse(raw);
-      const ul = document.createElement('ul');
-      ul.appendChild(renderNode(data, undefined, true));
-      tree.appendChild(ul);
-    } catch (e) {
-      const msg = document.createElement('div');
-      msg.className = 'error-msg';
-      msg.textContent = 'Invalid JSON: ' + e.message;
-      tree.appendChild(msg);
-    }
-  }
-
-  function renderNode(value, key, isRoot) {
-    const li = document.createElement('li');
-
-    if (value !== null && typeof value === 'object') {
-      const isArray  = Array.isArray(value);
-      const entries  = isArray ? [...value.entries()] : Object.entries(value);
-      const count    = entries.length;
-      const brackets = isArray ? ['[', ']'] : ['{', '}'];
-
-      const toggle = document.createElement('span');
-      toggle.className = 'toggle';
-      toggle.textContent = isRoot ? '▼' : '▶';
-
-      const keySpan = document.createElement('span');
-      keySpan.className = 'key';
-      if (key !== undefined) {
-        keySpan.textContent = isArray ? '[' + key + ']: ' : '"' + key + '": ';
-      }
-
-      const openBracket = document.createElement('span');
-      openBracket.textContent = brackets[0];
-
-      const badge = document.createElement('span');
-      badge.className = 'badge';
-      badge.textContent = ' ' + count + (count === 1 ? ' item' : ' items');
-      badge.style.display = isRoot ? 'none' : 'inline';
-
-      const childUl = document.createElement('ul');
-      childUl.style.display = isRoot ? 'block' : 'none';
-
-      for (const [k, v] of entries) {
-        childUl.appendChild(renderNode(v, isArray ? k : k, false));
-      }
-
-      const closeBracket = document.createElement('span');
-      closeBracket.textContent = brackets[1];
-      closeBracket.style.display = isRoot ? 'none' : 'inline';
-
-      toggle.addEventListener('click', () => {
-        const opening = childUl.style.display === 'none';
-        childUl.style.display = opening ? 'block' : 'none';
-        closeBracket.style.display = opening ? 'none' : 'inline';
-        badge.style.display = opening ? 'none' : 'inline';
-        toggle.textContent = opening ? '▼' : '▶';
-      });
-
-      li.append(toggle, keySpan, openBracket, badge, childUl, closeBracket);
-    } else {
-      const keySpan = document.createElement('span');
-      keySpan.className = 'key';
-      if (key !== undefined) {
-        keySpan.textContent = Array.isArray(key) ? '[' + key + ']: ' : '"' + key + '": ';
-      }
-
-      const valSpan = document.createElement('span');
-      if (value === null) {
-        valSpan.className = 'val-null';
-        valSpan.textContent = 'null';
-      } else if (typeof value === 'string') {
-        valSpan.className = 'val-string';
-        valSpan.textContent = '"' + value + '"';
-      } else {
-        valSpan.className = 'val-primitive';
-        valSpan.textContent = String(value);
-      }
-
-      const indent = document.createElement('span');
-      indent.style.display = 'inline-block';
-      indent.style.width = '1.2em';
-
-      li.append(indent, keySpan, valSpan);
-    }
-
-    return li;
-  }
-
-  // Expand button
-  btnExpand.addEventListener('click', () => {
-    if (lastFocus === 'input') {
-      try {
-        const parsed = JSON.parse(input.value);
-        input.value = JSON.stringify(parsed, null, 2);
-        parseAndRender();
-      } catch (_) {}
-    } else {
-      tree.querySelectorAll('li > ul').forEach(ul => { ul.style.display = 'block'; });
-      tree.querySelectorAll('.toggle').forEach(t  => { t.textContent = '▼'; });
-      tree.querySelectorAll('.badge').forEach(b   => { b.style.display = 'none'; });
-      tree.querySelectorAll('li > span:last-child').forEach(s => {
-        if (s.textContent === ']' || s.textContent === '}') s.style.display = 'none';
-      });
-    }
-  });
-
-  // Collapse button
-  btnCollapse.addEventListener('click', () => {
-    if (lastFocus === 'input') {
-      try {
-        const parsed = JSON.parse(input.value);
-        input.value = JSON.stringify(parsed);
-        parseAndRender();
-      } catch (_) {}
-    } else {
-      // Collapse everything, then re-open root level
-      tree.querySelectorAll('li > ul').forEach(ul => { ul.style.display = 'none'; });
-      tree.querySelectorAll('.toggle').forEach(t  => { t.textContent = '▶'; });
-      tree.querySelectorAll('.badge').forEach(b   => { b.style.display = 'inline'; });
-      tree.querySelectorAll('li > span:last-child').forEach(s => {
-        if (s.textContent === ']' || s.textContent === '}') s.style.display = 'inline';
-      });
-      // Re-open the root ul
-      const rootLi = tree.querySelector('ul > li');
-      if (rootLi) {
-        const rootUl = rootLi.querySelector('ul');
-        if (rootUl) rootUl.style.display = 'block';
-        const rootToggle = rootLi.querySelector('.toggle');
-        if (rootToggle) rootToggle.textContent = '▼';
-        const rootClose = rootLi.querySelector('li > span:last-child');
-        if (rootClose && (rootClose.textContent === ']' || rootClose.textContent === '}')) {
-          rootClose.style.display = 'none';
-        }
-        const rootBadge = rootLi.querySelector('.badge');
-        if (rootBadge) rootBadge.style.display = 'none';
-      }
-    }
-  });
-
-  // Returns the maximum number of consecutive backslashes before any " in text
-  function detectEscapeLevel(text) {
-    let maxLevel = 0;
-    const re = /\\+"/g;
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      const lvl = m[0].length - 1; // backslash count (exclude the ")
-      if (lvl > maxLevel) maxLevel = lvl;
-    }
-    return maxLevel;
-  }
-
-  function updateUnescapeLevel() {
-    const level = detectEscapeLevel(input.value);
-    if (level > 0) {
-      unescapeLevel.textContent = 'L' + level;
-      unescapeLevel.classList.add('visible');
-    } else {
-      unescapeLevel.textContent = '';
-      unescapeLevel.classList.remove('visible');
-    }
-  }
-
-  // Walk a parsed JSON value and parse any string values that are valid JSON objects/arrays.
-  // Returns { changed, value } — only the immediate children are inspected (one level per call).
-  function unescapeJsonStrings(data) {
-    if (Array.isArray(data)) {
-      let changed = false;
-      const value = data.map(item => {
-        const r = unescapeValue(item);
-        if (r.changed) changed = true;
-        return r.value;
-      });
-      return { changed, value };
-    }
-    if (data !== null && typeof data === 'object') {
-      let changed = false;
-      const value = {};
-      for (const [k, v] of Object.entries(data)) {
-        const r = unescapeValue(v);
-        if (r.changed) changed = true;
-        value[k] = r.value;
-      }
-      return { changed, value };
-    }
-    return { changed: false, value: data };
-  }
-
-  function unescapeValue(v) {
-    if (typeof v === 'string') {
-      const t = v.trim();
-      if (t.startsWith('{') || t.startsWith('[')) {
-        try { return { changed: true, value: JSON.parse(v) }; } catch (_) {}
-      }
-    } else if (v !== null && typeof v === 'object') {
-      return unescapeJsonStrings(v);
-    }
-    return { changed: false, value: v };
-  }
-
-  // Unescape button — one level per click (outer → inner)
-  btnUnescape.addEventListener('click', () => {
-    const raw = input.value.trim();
-    if (!raw) return;
-    let newValue = raw;
-
-    try {
-      const parsed = JSON.parse(raw);
-      if (typeof parsed === 'string') {
-        // Entire input is a JSON-encoded string → unwrap and pretty-print if inner is valid JSON
-        try {
-          newValue = JSON.stringify(JSON.parse(parsed), null, 2);
-        } catch (_) {
-          newValue = parsed;
-        }
-      } else if (parsed !== null && typeof parsed === 'object') {
-        // Walk the tree and parse string values that are JSON objects/arrays
-        const result = unescapeJsonStrings(parsed);
-        if (result.changed) newValue = JSON.stringify(result.value, null, 2);
-      }
-    } catch (_) {
-      // Not valid JSON — strip one backslash level as a last resort
-      newValue = raw.replace(/\\\\"/g, '"');
-    }
-
-    input.value = newValue;
-    parseAndRender();
-    updateUnescapeLevel();
-  });
-
-  // Copy button
-  btnCopy.addEventListener('click', () => {
-    if (input.value) {
-      navigator.clipboard.writeText(input.value).catch(() => {});
-    }
-  });
-
-  // Stringify mode toggle — when active, pasting valid JSON auto-converts it to an escaped string literal
-  let stringifyMode = false;
-  btnStringify.addEventListener('click', () => {
-    stringifyMode = !stringifyMode;
-    btnStringify.classList.toggle('btn-active', stringifyMode);
-  });
-
-  input.addEventListener('paste', e => {
-    if (!stringifyMode) return;
-    const text = (e.clipboardData || window.clipboardData).getData('text');
-    if (!text) return;
-    const trimmed = text.trim();
-    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return;
-    try {
-      const parsed = JSON.parse(trimmed);
-      e.preventDefault();
-      const stringified = JSON.stringify(JSON.stringify(parsed));
-      const start = input.selectionStart;
-      const end   = input.selectionEnd;
-      input.value = input.value.substring(0, start) + stringified + input.value.substring(end);
-      input.selectionStart = input.selectionEnd = start + stringified.length;
-      parseAndRender();
-      updateUnescapeLevel();
-    } catch (_) {}
-  });
-
-  // Recursively parse any string value that is valid JSON (all levels)
-  function deepUnstringify(value) {
-    if (typeof value === 'string') {
-      try { return deepUnstringify(JSON.parse(value)); } catch (_) {}
-      return value;
-    }
-    if (Array.isArray(value)) return value.map(deepUnstringify);
-    if (value !== null && typeof value === 'object') {
-      const out = {};
-      for (const [k, v] of Object.entries(value)) out[k] = deepUnstringify(v);
-      return out;
-    }
-    return value;
-  }
-
-  // Shared: try multiple strategies to parse raw input into a JS value
-  function tryParse(raw) {
-    try { return JSON.parse(raw); } catch (_) {}
-    try { return JSON.parse(raw.replace(/\\\\(.)/g, '$1')); } catch (_) {}
-    if (raw.startsWith('"') && raw.endsWith('"')) {
-      const inner = raw.slice(1, -1);
-      try { return JSON.parse(inner); } catch (_) {}
-      try { return JSON.parse(inner.replace(/\\\\(.)/g, '$1')); } catch (_) {}
-    }
-    return undefined;
-  }
-
-  // Unstringify all levels at once
-  btnUnstringify.addEventListener('click', () => {
-    const raw = input.value.trim();
-    if (!raw) return;
-    const parsed = tryParse(raw);
-    if (parsed === undefined) return;
-    input.value = JSON.stringify(deepUnstringify(parsed), null, 2);
-    parseAndRender();
-    updateUnescapeLevel();
-  });
-
-  // Unstringify one level per click — traverses full tree, parses each string once
-  btnUnstringifyAll.addEventListener('click', () => {
-    const raw = input.value.trim();
-    if (!raw) return;
-    const parsed = tryParse(raw);
-    if (parsed === undefined) return;
-
-    // Outer string literal: unwrap one level
-    if (typeof parsed === 'string') {
-      try {
-        input.value = JSON.stringify(JSON.parse(parsed), null, 2);
-      } catch (_) {
-        input.value = parsed;
-      }
-      parseAndRender();
-      updateUnescapeLevel();
-      return;
-    }
-
-    // If tryParse used a fallback (raw wasn't clean JSON), always write the result
-    let rawParseable = true;
-    try { JSON.parse(raw); } catch (_) { rawParseable = false; }
-
-    // Object/array: traverse entire tree, parse each string value once (no recursion into result)
-    let changed = false;
-    function oneLevelDeep(val) {
-      if (typeof val === 'string') {
-        try { const p = JSON.parse(val); changed = true; return p; } catch (_) {}
-        return val;
-      }
-      if (Array.isArray(val)) return val.map(oneLevelDeep);
-      if (val !== null && typeof val === 'object') {
-        const out = {};
-        for (const [k, v] of Object.entries(val)) out[k] = oneLevelDeep(v);
-        return out;
-      }
-      return val;
-    }
-    const result = oneLevelDeep(parsed);
-    if (changed || !rawParseable) {
-      input.value = JSON.stringify(result, null, 2);
-      parseAndRender();
-      updateUnescapeLevel();
-    }
-  });
-
-  // Wrap toggle
-  let wrapEnabled = false;
-  btnWrap.addEventListener('click', () => {
-    wrapEnabled = !wrapEnabled;
-    input.setAttribute('wrap', wrapEnabled ? 'soft' : 'off');
-    input.classList.toggle('wrap-on', wrapEnabled);
-    tree.classList.toggle('wrap-on', wrapEnabled);
-    treeBody.classList.toggle('wrap-on', wrapEnabled);
-    btnWrap.classList.toggle('btn-active', wrapEnabled);
-  });
-
-  // Clear button
-  btnClear.addEventListener('click', () => {
-    input.value = '';
-    tree.innerHTML = '';
-  });
-
-  // VS Code command bridge
-  window.addEventListener('message', event => {
-    const { type } = event.data;
-    if (type === 'expand')      btnExpand.click();
-    else if (type === 'collapse')    btnCollapse.click();
-    else if (type === 'stripQuotes') btnUnescape.click();
-  });
-}());
-</script>
+<script src="${scriptUri}"></script>
 </body>
 </html>`;
     }

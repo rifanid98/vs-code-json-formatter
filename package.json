@@ -3,7 +3,7 @@
   "displayName": "JSON Formatter",
   "description": "Side panel JSON formatter with expand, collapse, and strip-quotes",
   "publisher": "adnin",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "engines": {
     "vscode": "^1.120.0"
   },
@@ -70,8 +70,10 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "tsc -p ./ && npm run build:webview",
     "watch": "tsc -watch -p ./",
+    "build:webview": "esbuild src/webview/main.ts --bundle --minify --outfile=media/webview.js --format=iife --target=es2022",
+    "watch:webview": "npm run build:webview -- --watch",
     "package": "vsce package",
     "build": "npm run compile && vsce package",
     "publish": "vsce publish"
@@ -80,6 +82,16 @@
     "@types/node": "^18.19.130",
     "@types/vscode": "^1.120.0",
     "@vscode/vsce": "^3.9.1",
+    "esbuild": "^0.28.1",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/search": "^6.7.1",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
+    "codemirror": "^6.0.2"
   }
 }
