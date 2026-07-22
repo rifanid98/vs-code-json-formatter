@@ -3,3 +3,4 @@ media/webview.js
 node_modules/
 *.vsix
 .vscode-test/
+.claude
