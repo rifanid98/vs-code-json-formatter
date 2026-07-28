@@ -2,20 +2,12 @@ import { EditorState, EditorSelection, Compartment } from '@codemirror/state';
 import { EditorView, keymap, drawSelection, placeholder, KeyBinding } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { json } from '@codemirror/lang-json';
-import { indentUnit, indentOnInput, bracketMatching } from '@codemirror/language';
+import { indentUnit, indentOnInput, bracketMatching, HighlightStyle, syntaxHighlighting, foldGutter, foldKeymap, foldAll } from '@codemirror/language';
 import { selectNextOccurrence } from '@codemirror/search';
+import { tags } from '@lezer/highlight';
 
 (function () {
-  const inputSection    = document.getElementById('input-section')!;
-  const treeSection     = document.getElementById('tree-section')!;
-  const inputHeader     = document.getElementById('input-header')!;
-  const treeHeader      = document.getElementById('tree-header')!;
-  const inputBody       = document.getElementById('input-body')!;
-  const treeBody        = document.getElementById('tree-body')!;
-  const panelsContainer = document.getElementById('panels-container')!;
-  const sash            = document.getElementById('sash')!;
   const editorHost       = document.getElementById('input-editor')!;
-  const tree             = document.getElementById('tree')!;
   const btnExpand        = document.getElementById('btn-expand') as HTMLButtonElement;
   const btnCollapse      = document.getElementById('btn-collapse') as HTMLButtonElement;
   const btnUnescape      = document.getElementById('btn-unescape') as HTMLButtonElement;
@@ -23,6 +15,7 @@ import { selectNextOccurrence } from '@codemirror/search';
   const btnStringify     = document.getElementById('btn-stringify') as HTMLButtonElement;
   const btnUnstringify    = document.getElementById('btn-unstringify') as HTMLButtonElement;
   const btnUnstringifyAll = document.getElementById('btn-unstringify-all') as HTMLButtonElement;
+  const btnLooseJson     = document.getElementById('btn-loose-json') as HTMLButtonElement;
   const btnWrap           = document.getElementById('btn-wrap') as HTMLButtonElement;
   const btnCopy        = document.getElementById('btn-copy') as HTMLButtonElement;
   const btnClear       = document.getElementById('btn-clear') as HTMLButtonElement;
@@ -36,7 +29,6 @@ import { selectNextOccurrence } from '@codemirror/search';
   const btnReplace     = document.getElementById('btn-replace') as HTMLButtonElement;
   const btnReplaceAll  = document.getElementById('btn-replace-all') as HTMLButtonElement;
 
-  let lastFocus: 'input' | 'tree' = 'input';
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let stringifyMode = false;
 
@@ -71,6 +63,15 @@ import { selectNextOccurrence } from '@codemirror/search';
 
   const wrapCompartment = new Compartment();
 
+  // Keys, strings, numbers/booleans, and null each get a distinct color
+  const jsonHighlightStyle = HighlightStyle.define([
+    { tag: tags.propertyName, color: 'var(--vscode-symbolIcon-variableForeground, #9cdcfe)' },
+    { tag: tags.string,       color: 'var(--vscode-gitDecoration-addedResourceForeground, #ce9178)' },
+    { tag: tags.number,       color: 'var(--vscode-charts-yellow, #dcdcaa)' },
+    { tag: tags.bool,         color: 'var(--vscode-charts-green, #b5cea8)' },
+    { tag: tags.null,         color: 'var(--vscode-descriptionForeground, #569cd6)', fontStyle: 'italic' },
+  ]);
+
   const view = new EditorView({
     parent: editorHost,
     state: EditorState.create({
@@ -83,35 +84,36 @@ import { selectNextOccurrence } from '@codemirror/search';
         indentOnInput(),
         indentUnit.of('  '),
         json(),
+        syntaxHighlighting(jsonHighlightStyle),
+        foldGutter({ openText: '▾', closedText: '▸' }),
         wrapCompartment.of([]),
         placeholder('Paste JSON here…'),
         EditorView.contentAttributes.of({ spellcheck: 'false' }),
-        keymap.of([...multiCursorKeymap, indentWithTab, ...defaultKeymap, ...historyKeymap]),
+        keymap.of([...multiCursorKeymap, indentWithTab, ...defaultKeymap, ...historyKeymap, ...foldKeymap]),
         EditorView.updateListener.of(update => {
           if (!update.docChanged) return;
           clearTimeout(debounceTimer);
           debounceTimer = setTimeout(() => {
-            parseAndRender();
             updateUnescapeLevel();
           }, 300);
         }),
         EditorView.domEventHandlers({
-          focus: () => { setFocus('input'); },
           paste: (event, v) => {
-            if (!stringifyMode) return false;
             const text = event.clipboardData?.getData('text');
             if (!text) return false;
             const trimmed = text.trim();
             if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
             try {
               const parsed = JSON.parse(trimmed);
-              const stringified = JSON.stringify(JSON.stringify(parsed));
+              // Stringify mode: paste as an escaped string literal instead of raw JSON
+              const insert = stringifyMode
+                ? JSON.stringify(JSON.stringify(parsed))
+                : JSON.stringify(parsed, null, 2); // default: auto-expand so the fold/tree feature is immediately usable
               const { from, to } = v.state.selection.main;
               v.dispatch({
-                changes: { from, to, insert: stringified },
-                selection: { anchor: from + stringified.length },
+                changes: { from, to, insert },
+                selection: { anchor: from + insert.length },
               });
-              parseAndRender();
               updateUnescapeLevel();
               event.preventDefault();
               return true;
@@ -125,7 +127,7 @@ import { selectNextOccurrence } from '@codemirror/search';
             height: '100%',
             fontFamily: 'inherit',
             fontSize: 'inherit',
-            backgroundColor: 'var(--vscode-input-background, #1e1e1e)',
+            backgroundColor: 'var(--vscode-editor-background)',
             color: 'var(--vscode-input-foreground, #d4d4d4)',
           },
           '.cm-content': {
@@ -147,6 +149,27 @@ import { selectNextOccurrence } from '@codemirror/search';
           },
           '.cm-placeholder': {
             color: 'var(--vscode-input-placeholderForeground, #666)',
+          },
+          '.cm-gutters': {
+            backgroundColor: 'var(--vscode-editor-background)',
+            color: 'var(--vscode-descriptionForeground, #888)',
+            border: 'none',
+          },
+          '.cm-foldGutter span': {
+            cursor: 'pointer',
+            color: 'var(--vscode-descriptionForeground, #888)',
+          },
+          '.cm-foldGutter span:hover': {
+            color: 'var(--vscode-editor-foreground)',
+          },
+          '.cm-foldPlaceholder': {
+            backgroundColor: 'var(--vscode-badge-background, #4d4d4d)',
+            color: 'var(--vscode-badge-foreground, #dcdcaa)',
+            border: 'none',
+            borderRadius: '3px',
+            padding: '0 4px',
+            margin: '0 2px',
+            cursor: 'pointer',
           },
         }),
       ],
@@ -235,7 +258,6 @@ import { selectNextOccurrence } from '@codemirror/search';
     const m = findMatches[findCurrent];
     const rep = replaceInput.value;
     view.dispatch({ changes: { from: m.start, to: m.end, insert: rep } });
-    parseAndRender();
     runFind();
   });
 
@@ -244,204 +266,23 @@ import { selectNextOccurrence } from '@codemirror/search';
     if (!needle) return;
     const rep = replaceInput.value;
     setValue(getValue().split(needle).join(rep));
-    parseAndRender();
     runFind();
   });
 
-  // ── Accordion toggle ─────────────────────────────────────────────────
-  function toggleSection(section: Element): void {
-    const collapsed = section.classList.toggle('collapsed');
-    section.classList.toggle('expanded', !collapsed);
-  }
-
-  inputHeader.addEventListener('click', () => { toggleSection(inputSection); setFocus('input'); });
-  treeHeader.addEventListener('click',  () => { toggleSection(treeSection);  setFocus('tree'); });
-
-  // ── Sash drag to resize ───────────────────────────────────────────────
-  let sashDragging = false;
-  let sashStartY = 0;
-  let sashStartH = 0;
-
-  sash.addEventListener('mousedown', e => {
-    sashDragging = true;
-    sashStartY = e.clientY;
-    sashStartH = inputBody.getBoundingClientRect().height;
-    sash.classList.add('dragging');
-    e.preventDefault();
-  });
-
-  document.addEventListener('mousemove', e => {
-    if (!sashDragging) return;
-    const delta = e.clientY - sashStartY;
-    const containerH = panelsContainer.getBoundingClientRect().height;
-    const sashH = 4;
-    const headerH = 22 * 2 + sashH;
-    const available = containerH - headerH;
-    const newH = Math.max(40, Math.min(available - 40, sashStartH + delta));
-    (inputSection as HTMLElement).style.flex = 'none';
-    (inputSection as HTMLElement).style.height = newH + 'px';
-    (treeSection as HTMLElement).style.flex = '1';
-    (treeSection as HTMLElement).style.height = '';
-  });
-
-  document.addEventListener('mouseup', () => {
-    if (!sashDragging) return;
-    sashDragging = false;
-    sash.classList.remove('dragging');
-  });
-
-  // ── Focus tracking ────────────────────────────────────────────────────
-  inputSection.addEventListener('mousedown', () => setFocus('input'));
-  treeSection.addEventListener('mousedown',  () => setFocus('tree'));
-
-  function setFocus(pane: 'input' | 'tree'): void {
-    lastFocus = pane;
-    inputBody.classList.toggle('focused', pane === 'input');
-    treeBody.classList.toggle('focused',  pane === 'tree');
-  }
-
-  function parseAndRender(): void {
-    tree.innerHTML = '';
-    const raw = getValue().trim();
-    if (!raw) return;
-    try {
-      const data = JSON.parse(raw);
-      const ul = document.createElement('ul');
-      ul.appendChild(renderNode(data, undefined, true));
-      tree.appendChild(ul);
-    } catch (e: any) {
-      const msg = document.createElement('div');
-      msg.className = 'error-msg';
-      msg.textContent = 'Invalid JSON: ' + e.message;
-      tree.appendChild(msg);
-    }
-  }
-
-  function renderNode(value: any, key: string | number | undefined, isRoot: boolean): HTMLLIElement {
-    const li = document.createElement('li');
-
-    if (value !== null && typeof value === 'object') {
-      const isArray  = Array.isArray(value);
-      const entries  = isArray ? [...(value as any[]).entries()] : Object.entries(value);
-      const count    = entries.length;
-      const brackets = isArray ? ['[', ']'] : ['{', '}'];
-
-      const toggle = document.createElement('span');
-      toggle.className = 'toggle';
-      toggle.textContent = isRoot ? '▼' : '▶';
-
-      const keySpan = document.createElement('span');
-      keySpan.className = 'key';
-      if (key !== undefined) {
-        keySpan.textContent = isArray ? '[' + key + ']: ' : '"' + key + '": ';
-      }
-
-      const openBracket = document.createElement('span');
-      openBracket.textContent = brackets[0];
-
-      const badge = document.createElement('span');
-      badge.className = 'badge';
-      badge.textContent = ' ' + count + (count === 1 ? ' item' : ' items');
-      badge.style.display = isRoot ? 'none' : 'inline';
-
-      const childUl = document.createElement('ul');
-      childUl.style.display = isRoot ? 'block' : 'none';
-
-      for (const [k, v] of entries) {
-        childUl.appendChild(renderNode(v, isArray ? k : k, false));
-      }
-
-      const closeBracket = document.createElement('span');
-      closeBracket.textContent = brackets[1];
-      closeBracket.style.display = isRoot ? 'none' : 'inline';
-
-      toggle.addEventListener('click', () => {
-        const opening = childUl.style.display === 'none';
-        childUl.style.display = opening ? 'block' : 'none';
-        closeBracket.style.display = opening ? 'none' : 'inline';
-        badge.style.display = opening ? 'none' : 'inline';
-        toggle.textContent = opening ? '▼' : '▶';
-      });
-
-      li.append(toggle, keySpan, openBracket, badge, childUl, closeBracket);
-    } else {
-      const keySpan = document.createElement('span');
-      keySpan.className = 'key';
-      if (key !== undefined) {
-        keySpan.textContent = Array.isArray(key) ? '[' + key + ']: ' : '"' + key + '": ';
-      }
-
-      const valSpan = document.createElement('span');
-      if (value === null) {
-        valSpan.className = 'val-null';
-        valSpan.textContent = 'null';
-      } else if (typeof value === 'string') {
-        valSpan.className = 'val-string';
-        valSpan.textContent = '"' + value + '"';
-      } else {
-        valSpan.className = 'val-primitive';
-        valSpan.textContent = String(value);
-      }
-
-      const indent = document.createElement('span');
-      indent.style.display = 'inline-block';
-      indent.style.width = '1.2em';
-
-      li.append(indent, keySpan, valSpan);
-    }
-
-    return li;
-  }
-
-  // Expand button
+  // Expand button — pretty-print (2-space indent)
   btnExpand.addEventListener('click', () => {
-    if (lastFocus === 'input') {
-      try {
-        const parsed = JSON.parse(getValue());
-        setValue(JSON.stringify(parsed, null, 2));
-        parseAndRender();
-      } catch (_) { /* ignore invalid JSON */ }
-    } else {
-      tree.querySelectorAll('li > ul').forEach(ul => { (ul as HTMLElement).style.display = 'block'; });
-      tree.querySelectorAll('.toggle').forEach(t  => { t.textContent = '▼'; });
-      tree.querySelectorAll('.badge').forEach(b   => { (b as HTMLElement).style.display = 'none'; });
-      tree.querySelectorAll('li > span:last-child').forEach(s => {
-        if (s.textContent === ']' || s.textContent === '}') (s as HTMLElement).style.display = 'none';
-      });
-    }
+    try {
+      const parsed = JSON.parse(getValue());
+      setValue(JSON.stringify(parsed, null, 2));
+    } catch (_) { /* ignore invalid JSON */ }
   });
 
-  // Collapse button
+  // Collapse button — minify to a single line
   btnCollapse.addEventListener('click', () => {
-    if (lastFocus === 'input') {
-      try {
-        const parsed = JSON.parse(getValue());
-        setValue(JSON.stringify(parsed));
-        parseAndRender();
-      } catch (_) { /* ignore invalid JSON */ }
-    } else {
-      // Collapse everything, then re-open root level
-      tree.querySelectorAll('li > ul').forEach(ul => { (ul as HTMLElement).style.display = 'none'; });
-      tree.querySelectorAll('.toggle').forEach(t  => { t.textContent = '▶'; });
-      tree.querySelectorAll('.badge').forEach(b   => { (b as HTMLElement).style.display = 'inline'; });
-      tree.querySelectorAll('li > span:last-child').forEach(s => {
-        if (s.textContent === ']' || s.textContent === '}') (s as HTMLElement).style.display = 'inline';
-      });
-      // Re-open the root ul
-      const rootLi = tree.querySelector('ul > li');
-      if (rootLi) {
-        const rootUl = rootLi.querySelector('ul');
-        if (rootUl) (rootUl as HTMLElement).style.display = 'block';
-        const rootToggle = rootLi.querySelector('.toggle');
-        if (rootToggle) rootToggle.textContent = '▼';
-        const rootClose = rootLi.querySelector('li > span:last-child');
-        if (rootClose && (rootClose.textContent === ']' || rootClose.textContent === '}')) {
-          (rootClose as HTMLElement).style.display = 'none';
-        }
-        const rootBadge = rootLi.querySelector('.badge');
-        if (rootBadge) (rootBadge as HTMLElement).style.display = 'none';
-      }
-    }
+    try {
+      const parsed = JSON.parse(getValue());
+      setValue(JSON.stringify(parsed));
+    } catch (_) { /* ignore invalid JSON */ }
   });
 
   // Returns the maximum number of consecutive backslashes before any " in text
@@ -530,7 +371,6 @@ import { selectNextOccurrence } from '@codemirror/search';
     }
 
     setValue(newValue);
-    parseAndRender();
     updateUnescapeLevel();
   });
 
@@ -575,6 +415,106 @@ import { selectNextOccurrence } from '@codemirror/search';
     return undefined;
   }
 
+  // Parse a loose, unquoted key:value object/array literal (e.g. copied from a Go/log
+  // dump like {key:value,nested:{a:1},list:[{b:2}]}) into a proper JS value.
+  // Keys and scalar values carry no quotes, so string boundaries are inferred:
+  //   - a comma inside an object value only ends the value if what follows looks like
+  //     `identifier:` (a new key) — otherwise it's kept as part of the string
+  //   - a comma inside an array element always ends that element
+  function parseLooseValue(input: string): any {
+    let i = 0;
+    const n = input.length;
+    const keyLookahead = /^\s*[A-Za-z_][A-Za-z0-9_]*\s*:/;
+
+    function skipWs(): void {
+      while (i < n && /\s/.test(input[i])) i++;
+    }
+
+    function parseValue(inArray: boolean): any {
+      skipWs();
+      if (input[i] === '{') return parseObject();
+      if (input[i] === '[') return parseArray();
+      return parseScalar(inArray);
+    }
+
+    function parseKey(): string {
+      const start = i;
+      while (i < n && input[i] !== ':') i++;
+      return input.slice(start, i).trim();
+    }
+
+    function parseScalar(inArray: boolean): any {
+      const start = i;
+      while (i < n) {
+        const ch = input[i];
+        if (ch === '}' || ch === ']') break;
+        if (ch === ',') {
+          if (inArray || keyLookahead.test(input.slice(i + 1))) break;
+        }
+        i++;
+      }
+      return convertScalar(input.slice(start, i).trim());
+    }
+
+    function convertScalar(raw: string): any {
+      if (raw === '') return '';
+      if (raw === 'true') return true;
+      if (raw === 'false') return false;
+      if (raw === 'null') return null;
+      if (/^-?\d+$/.test(raw)) return parseInt(raw, 10);
+      if (/^-?\d+\.\d+$/.test(raw)) return parseFloat(raw);
+      return raw;
+    }
+
+    function parseObject(): any {
+      i++; // skip '{'
+      const obj: Record<string, any> = {};
+      skipWs();
+      if (input[i] === '}') { i++; return obj; }
+      while (true) {
+        skipWs();
+        const key = parseKey();
+        if (input[i] === ':') i++;
+        obj[key] = parseValue(false);
+        skipWs();
+        if (input[i] === ',') { i++; continue; }
+        if (input[i] === '}') { i++; }
+        break;
+      }
+      return obj;
+    }
+
+    function parseArray(): any {
+      i++; // skip '['
+      const arr: any[] = [];
+      skipWs();
+      if (input[i] === ']') { i++; return arr; }
+      while (true) {
+        arr.push(parseValue(true));
+        skipWs();
+        if (input[i] === ',') { i++; continue; }
+        if (input[i] === ']') { i++; }
+        break;
+      }
+      return arr;
+    }
+
+    skipWs();
+    return parseValue(false);
+  }
+
+  // Loose-object → JSON button: converts an unquoted key:value blob into valid JSON
+  btnLooseJson.addEventListener('click', () => {
+    const raw = getValue().trim();
+    if (!raw || (!raw.startsWith('{') && !raw.startsWith('['))) return;
+    try { JSON.parse(raw); return; } catch (_) { /* not already valid JSON, proceed */ }
+    try {
+      const parsed = parseLooseValue(raw);
+      setValue(JSON.stringify(parsed, null, 2));
+      updateUnescapeLevel();
+    } catch (_) { /* malformed input — leave untouched */ }
+  });
+
   // Unstringify all levels at once
   btnUnstringify.addEventListener('click', () => {
     const raw = getValue().trim();
@@ -582,7 +522,6 @@ import { selectNextOccurrence } from '@codemirror/search';
     const parsed = tryParse(raw);
     if (parsed === undefined) return;
     setValue(JSON.stringify(deepUnstringify(parsed), null, 2));
-    parseAndRender();
     updateUnescapeLevel();
   });
 
@@ -600,7 +539,6 @@ import { selectNextOccurrence } from '@codemirror/search';
       } catch (_) {
         setValue(parsed);
       }
-      parseAndRender();
       updateUnescapeLevel();
       return;
     }
@@ -627,7 +565,6 @@ import { selectNextOccurrence } from '@codemirror/search';
     const result = oneLevelDeep(parsed);
     if (changed || !rawParseable) {
       setValue(JSON.stringify(result, null, 2));
-      parseAndRender();
       updateUnescapeLevel();
     }
   });
@@ -637,22 +574,21 @@ import { selectNextOccurrence } from '@codemirror/search';
   btnWrap.addEventListener('click', () => {
     wrapEnabled = !wrapEnabled;
     view.dispatch({ effects: wrapCompartment.reconfigure(wrapEnabled ? [EditorView.lineWrapping] : []) });
-    tree.classList.toggle('wrap-on', wrapEnabled);
-    treeBody.classList.toggle('wrap-on', wrapEnabled);
     btnWrap.classList.toggle('btn-active', wrapEnabled);
   });
 
   // Clear button
   btnClear.addEventListener('click', () => {
     setValue('');
-    tree.innerHTML = '';
   });
 
   // VS Code command bridge
   window.addEventListener('message', event => {
     const { type } = event.data;
     if (type === 'expand')      btnExpand.click();
-    else if (type === 'collapse')    btnCollapse.click();
+    // Cmd/Ctrl+Shift+- folds all blocks in the input editor (the fold/tree feature),
+    // independent of the ◀ Collapse button, which still minifies to a single line.
+    else if (type === 'collapse')    foldAll(view);
     else if (type === 'stripQuotes') btnUnescape.click();
   });
 }());

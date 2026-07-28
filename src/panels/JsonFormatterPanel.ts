@@ -85,94 +85,6 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
     background: var(--vscode-button-hoverBackground, #1177bb);
   }
 
-  /* ── Accordion sections ─────────────────────────────────────────────── */
-
-  #panels-container {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .section {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
-
-  .section.expanded {
-    flex: 1;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    height: 22px;
-    padding: 0 8px;
-    flex-shrink: 0;
-    cursor: pointer;
-    user-select: none;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-editor-foreground));
-    background: var(--vscode-sideBarSectionHeader-background, transparent);
-    border-bottom: 1px solid var(--vscode-panel-border, #333);
-  }
-
-  .section-header:hover {
-    background: var(--vscode-list-hoverBackground, rgba(255,255,255,0.06));
-  }
-
-  .section-chevron {
-    font-size: 11px;
-    color: var(--vscode-descriptionForeground, #888);
-    display: inline-block;
-    transition: transform 0.12s ease;
-    width: 12px;
-    text-align: center;
-  }
-
-  .section.collapsed .section-chevron {
-    transform: rotate(-90deg);
-  }
-
-  .section-body {
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .section.collapsed .section-body {
-    display: none;
-  }
-
-  .section-body.focused {
-    outline: 1px solid var(--vscode-focusBorder, #007fd4);
-    outline-offset: -1px;
-  }
-
-  /* ── Sash (resize handle) ─────────────────────────────────────────────── */
-
-  #sash {
-    height: 4px;
-    flex-shrink: 0;
-    cursor: ns-resize;
-    background: var(--vscode-panel-border, #333);
-    position: relative;
-    z-index: 10;
-    transition: background 0.1s;
-  }
-
-  #sash:hover, #sash.dragging {
-    background: var(--vscode-sash-hoverBorder, #007fd4);
-  }
-
   /* ── Input editor (CodeMirror) ─────────────────────────────────────── */
 
   #input-editor {
@@ -191,73 +103,6 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
     overflow: auto;
   }
 
-  /* ── Tree body ─────────────────────────────────────────────────────── */
-
-  #tree-body {
-    overflow-y: auto;
-    overflow-x: auto;
-    flex: 1;
-  }
-
-  #tree {
-    padding: 6px 8px;
-  }
-
-  #tree ul {
-    list-style: none;
-    padding-left: 1.4em;
-  }
-
-  #tree > ul {
-    padding-left: 0;
-  }
-
-  #tree li {
-    line-height: 1.7;
-    white-space: nowrap;
-  }
-
-  #tree.wrap-on li {
-    white-space: normal;
-    word-break: break-all;
-  }
-
-  .toggle {
-    cursor: pointer;
-    display: inline-block;
-    width: 1.2em;
-    color: var(--vscode-descriptionForeground, #888);
-    user-select: none;
-    font-size: 0.85em;
-  }
-
-  .toggle:hover {
-    color: var(--vscode-editor-foreground);
-  }
-
-  .key {
-    color: var(--vscode-symbolIcon-variableForeground, #9cdcfe);
-  }
-
-  .val-string {
-    color: var(--vscode-gitDecoration-addedResourceForeground, #ce9178);
-  }
-
-  .val-primitive {
-    color: var(--vscode-charts-orange, #b5cea8);
-  }
-
-  .val-null {
-    color: var(--vscode-descriptionForeground, #569cd6);
-    font-style: italic;
-  }
-
-  .badge {
-    color: var(--vscode-descriptionForeground, #666);
-    font-size: 0.85em;
-    margin-left: 2px;
-  }
-
   .level-badge {
     display: none;
     font-size: 10px;
@@ -272,13 +117,6 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
 
   .level-badge.visible {
     display: inline;
-  }
-
-  .error-msg {
-    color: var(--vscode-errorForeground, #f48771);
-    font-size: 12px;
-    padding: 4px 0;
-    font-style: italic;
   }
 
   #find-bar {
@@ -368,6 +206,7 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
   <button id="btn-stringify"      title="Stringify mode — auto-convert pasted JSON to an escaped string literal">" Str</button>
   <button id="btn-unstringify"     title="Unstringify all levels at once — recursively convert all nested escaped JSON strings">" UnStr</button>
   <button id="btn-unstringify-all" title="Unstringify one level per click — press repeatedly to go level by level">" UnStr↑</button>
+  <button id="btn-loose-json"      title="Convert an unquoted key:value blob (e.g. copied from logs) into valid JSON">{ } Parse</button>
   <button id="btn-wrap"        title="Toggle word wrap">⇌ Wrap</button>
   <button id="btn-copy"     title="Copy input to clipboard">⎘ Copy</button>
   <button id="btn-clear"    title="Clear all">✕ Clear</button>
@@ -388,31 +227,7 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
   </div>
 </div>
 
-<div id="panels-container">
-
-<div id="input-section" class="section expanded">
-  <div class="section-header" id="input-header">
-    <span class="section-chevron">▾</span>
-    <span class="section-title">Input</span>
-  </div>
-  <div class="section-body focused" id="input-body">
-    <div id="input-editor"></div>
-  </div>
-</div>
-
-<div id="sash"></div>
-
-<div id="tree-section" class="section expanded">
-  <div class="section-header" id="tree-header">
-    <span class="section-chevron">▾</span>
-    <span class="section-title">Tree</span>
-  </div>
-  <div class="section-body" id="tree-body">
-    <div id="tree"></div>
-  </div>
-</div>
-
-</div>
+<div id="input-editor"></div>
 
 <script src="${scriptUri}"></script>
 </body>

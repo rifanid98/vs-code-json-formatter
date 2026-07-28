@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.6.0] — 2026-07-28
+
+### Added
+
+- **`{ } Parse` — Loose Key:Value to JSON** — New toolbar button converts an
+  unquoted `key:value` blob (e.g. copied from logs or a webhook dump like
+  `{code:ABC,price:15000,items:[{name:x,ok:true}]}`) into valid JSON. Infers
+  numbers, booleans, and `null` from bare tokens, quotes everything else as a
+  string, and correctly keeps commas that are part of a string value (rather
+  than a new key) by checking whether what follows looks like `identifier:`.
+- **Syntax-Highlighted Input Editor** — The input editor now colors keys,
+  strings, numbers/booleans, and `null` to match the Tree panel's existing
+  color scheme, instead of rendering all text in a single color.
+
+---
+
 ## [0.5.0] — 2026-07-22
 
 ### Added
