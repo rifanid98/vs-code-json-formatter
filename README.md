@@ -16,6 +16,7 @@ A full CodeMirror 6 code editor (not a plain textarea) for pasting and editing J
 - **Code folding** — multi-line `{...}` / `[...]` blocks get a clickable fold arrow (▾ / ▸) in the gutter, the same collapse/expand affordance as the Tree view, directly in the raw text.
 - **Multi-cursor editing** — `Cmd/Ctrl+Alt+Up` / `Down` adds a cursor on the line above/below; `Cmd/Ctrl+G` selects the word under the cursor and adds the next matching occurrence each time it's pressed again.
 - **Tab / Shift+Tab** indents/dedents the current line or selection by 2 spaces, JSON-aware.
+- **Per-keystroke undo** — every keystroke is its own undo step, and toolbar transforms, paste, and Replace each undo as a separate step instead of merging into the edit before them.
 - Word wrap is off by default; enable it with the **⇌ Wrap** button.
 
 ### Interactive Tree View
@@ -39,12 +40,17 @@ The parsed JSON is rendered as a collapsible tree below the input. All nodes sta
 
 ### Find & Replace
 
-Open the Find & Replace bar via the **⌕ Find** button or keyboard shortcut. It provides:
+Open the Find & Replace bar via the **⌕ Find** button or `Cmd+F` / `Ctrl+F` while the panel has focus (press it again to close). It provides:
 - **Live search** with match count (`n / total`)
+- **Auto-fill from selection** — with a single-line selection in the input editor, `Cmd+F` / `Ctrl+F` fills the find box with it and jumps to that match
+- **`Aa`** — Match Case toggle (case-insensitive by default)
+- **`.*`** — Use Regular Expression toggle; an invalid pattern shows "Invalid regex" and outlines the box in red
 - **↑ ↓** navigation between matches
 - **Replace** — replace the current match
-- **All** — replace all matches at once
+- **All** — replace all matches at once; in regex mode the replacement supports capture groups (`$1`, `$&`), in plain-text mode it is inserted literally
 - `Escape` closes the bar and returns focus to the input
+
+`Cmd+Z` / `Ctrl+Z` inside the Find or Replace box undoes that box's own text; inside the input editor it undoes the JSON.
 
 ### Unescape by Level
 
@@ -101,12 +107,11 @@ Global (registered VS Code commands — work regardless of focus, as long as the
 
 > Mac: replace `Ctrl` with `Cmd`.
 
-Editor-only (active while the Input editor has focus):
+Panel-only (active while the panel has focus):
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+F` | Open / close Find & Replace bar |
-| `Ctrl+H` | Open / close Find & Replace bar |
+| `Ctrl+F` | Open / close Find & Replace bar (fills the find box from a single-line selection) |
 | `Enter` (in Find box) | Next match |
 | `Shift+Enter` (in Find box) | Previous match |
 | `Escape` (in Find bar) | Close Find & Replace bar |
@@ -116,7 +121,7 @@ Editor-only (active while the Input editor has focus):
 | `Ctrl+Shift+[` / `]` | Fold / unfold the block at the cursor |
 | `Ctrl+Alt+[` / `]` | Fold / unfold all |
 
-> Mac: `Ctrl+Alt+Up/Down` → `Cmd+Option+Up/Down`, `Ctrl+G` → `Cmd+G`, `Ctrl+Shift+[`/`]` → `Cmd+Option+[`/`]`.
+> Mac: `Ctrl+F` → `Cmd+F`, `Ctrl+Alt+Up/Down` → `Cmd+Option+Up/Down`, `Ctrl+G` → `Cmd+G`, `Ctrl+Shift+[`/`]` → `Cmd+Option+[`/`]`.
 
 ---
 
@@ -189,10 +194,10 @@ This produces `json-formatter-x.x.x.vsix` in the project root.
 Install from the VSIX file:
 
 1. `Ctrl+Shift+P` → `Extensions: Install from VSIX...`
-2. Select `json-formatter-0.6.0.vsix`
+2. Select `json-formatter-0.7.0.vsix`
 3. Reload VSCode when prompted
 
 Or via terminal:
 ```bash
-code --install-extension json-formatter-0.6.0.vsix
+code --install-extension json-formatter-0.7.0.vsix
 ```
