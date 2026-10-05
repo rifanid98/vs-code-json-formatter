@@ -4,6 +4,49 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.0] — 2026-10-05
+
+### Added
+
+- **Find — Match Case & Regex Toggles** — The Find bar has `Aa` (Match Case) and
+  `.*` (Use Regular Expression) toggle buttons next to the find input. Case-
+  insensitive stays the default. In regex mode, Replace All supports
+  capture-group references (`$1`, `$&`); in plain-text mode the replacement is
+  inserted literally. An invalid pattern shows "Invalid regex" and highlights
+  the input instead of throwing.
+- **Find Input Auto-Fills From Selection** — Opening Find & Replace (or pressing
+  `Cmd+F` / `Ctrl+F` again while the editor has focus) with a single-line
+  selection in the JSON editor seeds the find input with it and lands on that
+  match instead of the first one. Multi-line selections are ignored, and the
+  seed is regex-escaped when regex mode is on.
+
+### Fixed
+
+- **`Cmd+F` / `Ctrl+F` Opened Two Find Widgets** — Pressing the shortcut in the
+  panel opened the panel's own find bar *and* VS Code's native Find on the
+  editor underneath. The webview's `keydown` listener can't stop VS Code's own
+  keybinding, so Find is now claimed via a `jsonFormatter.toggleFind`
+  keybinding. `focusedView`, `sideBarFocus`, and `panelFocus` don't track
+  focus for webview views (confirmed with VS Code's keyboard shortcuts
+  troubleshooting log), so it is scoped to "this container is the active one
+  and neither the editor nor the terminal has focus"
+  (`activeViewlet`/`activePanel`/`activeAuxiliary` with
+  `!editorFocus && !terminalFocus`).
+- **Undo Merged Unrelated Edits** — Replace, Replace All, paste, and the
+  toolbar transforms dispatched document changes without a CodeMirror
+  `userEvent` annotation, which made them eligible to merge into the preceding
+  undo step. They are now tagged (`input.paste` / `json-formatter.replace`).
+- **Undo Is Now Per-Keystroke** — Set `history({ newGroupDelay: 0 })` so each
+  keystroke is its own undo step instead of CodeMirror's default 500ms
+  grouping. `Cmd+Z` inside the Find/Replace inputs acts on that input only.
+
+### Changed
+
+- Removed the raw `Ctrl/Cmd+H` listener inside the webview; `Cmd+F` / `Ctrl+F`
+  is the only find shortcut and opens the find and replace inputs together.
+
+---
+
 ## [0.6.0] — 2026-07-28
 
 ### Added

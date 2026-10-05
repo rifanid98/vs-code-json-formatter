@@ -16,6 +16,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ['jsonFormatter.expand', 'expand'],
         ['jsonFormatter.collapse', 'collapse'],
         ['jsonFormatter.stripQuotes', 'stripQuotes'],
+        ['jsonFormatter.toggleFind', 'toggleFind'],
     ];
 
     for (const [commandId, messageType] of commands) {

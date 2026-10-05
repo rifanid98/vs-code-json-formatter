@@ -3,7 +3,7 @@
   "displayName": "JSON Formatter",
   "description": "Side panel JSON formatter with expand, collapse, and strip-quotes",
   "publisher": "adnin",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "engines": {
     "vscode": "^1.120.0"
   },
@@ -43,6 +43,10 @@
       {
         "command": "jsonFormatter.stripQuotes",
         "title": "JSON Formatter: Unescape (\\\" → \")"
+      },
+      {
+        "command": "jsonFormatter.toggleFind",
+        "title": "JSON Formatter: Toggle Find"
       }
     ],
     "keybindings": [
@@ -60,6 +64,12 @@
         "command": "jsonFormatter.stripQuotes",
         "key": "ctrl+shift+up",
         "mac": "cmd+shift+up"
+      },
+      {
+        "command": "jsonFormatter.toggleFind",
+        "key": "ctrl+f",
+        "mac": "cmd+f",
+        "when": "(activeViewlet == 'workbench.view.extension.json-formatter-container' || activePanel == 'workbench.view.extension.json-formatter-container' || activeAuxiliary == 'workbench.view.extension.json-formatter-container') && !editorFocus && !terminalFocus"
       }
     ]
   },

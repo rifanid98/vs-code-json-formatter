@@ -1,4 +1,4 @@
-import { EditorState, EditorSelection, Compartment } from '@codemirror/state';
+import { EditorState, EditorSelection, Compartment, Transaction } from '@codemirror/state';
 import { EditorView, keymap, drawSelection, placeholder, KeyBinding } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { json } from '@codemirror/lang-json';
@@ -22,6 +22,8 @@ import { tags } from '@lezer/highlight';
   const btnFind        = document.getElementById('btn-find') as HTMLButtonElement;
   const findBar        = document.getElementById('find-bar')!;
   const findInput      = document.getElementById('find-input') as HTMLInputElement;
+  const btnCase        = document.getElementById('btn-case') as HTMLButtonElement;
+  const btnRegex       = document.getElementById('btn-regex') as HTMLButtonElement;
   const replaceInput   = document.getElementById('replace-input') as HTMLInputElement;
   const findCount      = document.getElementById('find-count')!;
   const btnPrev        = document.getElementById('btn-prev') as HTMLButtonElement;
@@ -78,7 +80,10 @@ import { tags } from '@lezer/highlight';
       doc: '',
       extensions: [
         EditorState.allowMultipleSelections.of(true),
-        history(),
+        // newGroupDelay: 0 — by default CodeMirror bundles keystrokes typed within
+        // 500ms of each other into one undo step (most editors' normal behavior);
+        // this makes every individual keystroke its own step instead.
+        history({ newGroupDelay: 0 }),
         drawSelection(),
         bracketMatching(),
         indentOnInput(),
@@ -113,6 +118,10 @@ import { tags } from '@lezer/highlight';
               v.dispatch({
                 changes: { from, to, insert },
                 selection: { anchor: from + insert.length },
+                // Tagged as "input.paste" (CodeMirror's own convention) so history
+                // never silently merges this into whatever edit preceded it — an
+                // untagged transaction is always join-eligible regardless of kind.
+                annotations: Transaction.userEvent.of('input.paste'),
               });
               updateUnescapeLevel();
               event.preventDefault();
@@ -181,62 +190,138 @@ import { tags } from '@lezer/highlight';
   }
 
   function setValue(text: string): void {
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: text },
+      // Tagged so this full-document replace (Expand/Collapse/Unescape/Replace All/
+      // etc.) is never silently merged into whatever edit preceded it in the undo
+      // history — an untagged transaction is always join-eligible regardless of kind,
+      // and a full-doc replace's range trivially overlaps almost any prior edit's.
+      annotations: Transaction.userEvent.of('json-formatter.replace'),
+    });
   }
 
   // ── Find & Replace state ──────────────────────────────────────────────
   let findMatches: { start: number; end: number }[] = [];
   let findCurrent = -1;
+  let matchCase = false;
+  let useRegex = false;
+
+  function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // Builds the RegExp for the current needle/mode, or null if the pattern is
+  // invalid (e.g. an unterminated group while typing a regex).
+  function buildFindRegExp(needle: string): RegExp | null {
+    const pattern = useRegex ? needle : escapeRegExp(needle);
+    try {
+      return new RegExp(pattern, matchCase ? 'g' : 'gi');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  btnCase.addEventListener('click', () => {
+    matchCase = !matchCase;
+    btnCase.classList.toggle('btn-active', matchCase);
+    runFind();
+  });
+
+  btnRegex.addEventListener('click', () => {
+    useRegex = !useRegex;
+    btnRegex.classList.toggle('btn-active', useRegex);
+    runFind();
+  });
 
   function findBarOpen(): boolean {
     return findBar.classList.contains('open');
   }
 
-  btnFind.addEventListener('click', () => {
+  function closeFindBar(): void {
+    findBar.classList.remove('open');
+    findMatches = [];
+    findCurrent = -1;
+    findCount.textContent = '';
+  }
+
+  // Cmd+F toggles the find + replace bar. A single-line editor selection seeds the
+  // find input.
+  function showFindBar(): void {
     const wasOpen = findBarOpen();
-    findBar.classList.toggle('open');
-    if (!wasOpen) {
-      findInput.focus();
-      findInput.select();
-      runFind();
-    } else {
-      findMatches = [];
-      findCurrent = -1;
-      findCount.textContent = '';
-    }
-  });
+
+    const sel = view.state.selection.main;
+    const selected = sel.empty ? '' : view.state.sliceDoc(sel.from, sel.to);
+    // While the bar is already open, only re-seed if the editor itself has focus —
+    // otherwise the selection is just the current match highlighted by stepMatch().
+    const seed = selected && !selected.includes('\n') && (!wasOpen || view.hasFocus) ? selected : '';
+
+    if (wasOpen && !seed) { closeFindBar(); return; }
+
+    findBar.classList.add('open');
+    if (seed) findInput.value = useRegex ? escapeRegExp(seed) : seed;
+    if (!wasOpen || seed) runFind(seed ? sel.from : undefined);
+    findInput.focus();
+    findInput.select();
+  }
+
+  btnFind.addEventListener('click', () => showFindBar());
 
   // Close find bar with Escape
   findBar.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { btnFind.click(); view.focus(); }
+    if (e.key === 'Escape') { closeFindBar(); view.focus(); }
     if (e.key === 'Enter' && e.target === findInput) {
       e.shiftKey ? stepMatch(-1) : stepMatch(1);
     }
+    // Undo/Redo (Cmd+Z / Cmd+Shift+Z) is intentionally left untouched here — it
+    // should affect whichever element you're actually focused in (the find/replace
+    // <input>'s own text, or the JSON editor's content), never both at once. An
+    // earlier attempt to redirect it unconditionally to the JSON editor caused
+    // exactly that: both changing together from one keypress.
   });
 
-  // Toggle with Ctrl+F / Ctrl+H (and Cmd equivalents)
-  document.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'h')) {
-      e.preventDefault();
-      btnFind.click();
-    }
-  });
+  // Cmd+F / Ctrl+F is claimed via the jsonFormatter.toggleFind command
+  // (package.json keybindings) instead of a raw keydown listener here — a listener
+  // in the webview can't stop VS Code's own Find keybinding from also firing on
+  // the underlying editor, but a contributed keybinding with a matching `when`
+  // clause takes precedence over it. `focusedView`/`sideBarFocus`/`panelFocus` all fail to
+  // track focus correctly for webview-type views (confirmed via VS Code's
+  // keybindings troubleshooting log, and see issue #194830) — the reliable
+  // signal instead is "our container is the active one AND neither the editor
+  // nor terminal currently has focus" (activeViewlet/activePanel/activeAuxiliary
+  // combined with !editorFocus && !terminalFocus).
 
   findInput.addEventListener('input', () => { runFind(); });
 
-  function runFind(): void {
+  // `anchor` (a document offset) makes the first match at/after it the current one,
+  // so seeding from a selection lands on that selection instead of the first match.
+  function runFind(anchor?: number): void {
     findMatches = [];
     findCurrent = -1;
     const needle = findInput.value;
-    if (!needle) { findCount.textContent = ''; return; }
+    if (!needle) { findInput.classList.remove('invalid'); findCount.textContent = ''; return; }
+
+    const re = buildFindRegExp(needle);
+    if (!re) {
+      findInput.classList.add('invalid');
+      findCount.textContent = 'Invalid regex';
+      return;
+    }
+    findInput.classList.remove('invalid');
+
     const text = getValue();
-    let idx = 0;
-    while ((idx = text.indexOf(needle, idx)) !== -1) {
-      findMatches.push({ start: idx, end: idx + needle.length });
-      idx += needle.length;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      findMatches.push({ start: m.index, end: m.index + m[0].length });
+      if (m[0].length === 0) re.lastIndex++; // avoid an infinite loop on a zero-length regex match
     }
     findCount.textContent = findMatches.length + ' found';
-    if (findMatches.length) stepMatch(1);
+    if (findMatches.length) {
+      if (anchor !== undefined) {
+        const idx = findMatches.findIndex(match => match.start >= anchor);
+        findCurrent = (idx === -1 ? 0 : idx) - 1; // stepMatch(1) advances onto idx
+      }
+      stepMatch(1);
+    }
   }
 
   function stepMatch(dir: number): void {
@@ -257,15 +342,22 @@ import { tags } from '@lezer/highlight';
     if (findCurrent < 0 || !findMatches.length) return;
     const m = findMatches[findCurrent];
     const rep = replaceInput.value;
-    view.dispatch({ changes: { from: m.start, to: m.end, insert: rep } });
+    view.dispatch({
+      changes: { from: m.start, to: m.end, insert: rep },
+      annotations: Transaction.userEvent.of('json-formatter.replace'),
+    });
     runFind();
   });
 
   btnReplaceAll.addEventListener('click', () => {
     const needle = findInput.value;
     if (!needle) return;
-    const rep = replaceInput.value;
-    setValue(getValue().split(needle).join(rep));
+    const re = buildFindRegExp(needle);
+    if (!re) return;
+    // In plain-text mode, escape "$" so String.replace doesn't treat it as a
+    // capture-group reference — only regex mode intentionally supports $1, $&, etc.
+    const rep = useRegex ? replaceInput.value : replaceInput.value.replace(/\$/g, '$$$$');
+    setValue(getValue().replace(re, rep));
     runFind();
   });
 
@@ -590,5 +682,6 @@ import { tags } from '@lezer/highlight';
     // independent of the ◀ Collapse button, which still minifies to a single line.
     else if (type === 'collapse')    foldAll(view);
     else if (type === 'stripQuotes') btnUnescape.click();
+    else if (type === 'toggleFind')  showFindBar();
   });
 }());

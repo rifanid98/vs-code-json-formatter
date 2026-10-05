@@ -76,12 +76,14 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
     font-size: 13px;
   }
 
-  #toolbar button.btn-active {
+  #toolbar button.btn-active,
+  .find-row button.btn-active {
     background: var(--vscode-button-background, #0e639c);
     color: var(--vscode-button-foreground, #fff);
   }
 
-  #toolbar button.btn-active:hover {
+  #toolbar button.btn-active:hover,
+  .find-row button.btn-active:hover {
     background: var(--vscode-button-hoverBackground, #1177bb);
   }
 
@@ -153,6 +155,15 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
     border-color: var(--vscode-focusBorder, #007fd4);
   }
 
+  .find-row input[type="text"].invalid {
+    border-color: var(--vscode-inputValidation-errorBorder, #f14c4c);
+  }
+
+  .find-row button.find-toggle {
+    padding: 3px 6px;
+    font-weight: 600;
+  }
+
   .find-row button {
     padding: 3px 8px;
     font-size: 12px;
@@ -210,12 +221,14 @@ export class JsonFormatterPanel implements vscode.WebviewViewProvider {
   <button id="btn-wrap"        title="Toggle word wrap">⇌ Wrap</button>
   <button id="btn-copy"     title="Copy input to clipboard">⎘ Copy</button>
   <button id="btn-clear"    title="Clear all">✕ Clear</button>
-  <button id="btn-find"     title="Find &amp; Replace (Ctrl+F / Ctrl+H)">⌕ Find</button>
+  <button id="btn-find"     title="Find &amp; Replace (Cmd/Ctrl+F)">⌕ Find</button>
 </div>
 
 <div id="find-bar">
   <div class="find-row">
     <input type="text" id="find-input" placeholder="Find…" autocomplete="off" spellcheck="false" />
+    <button id="btn-case" class="find-toggle" title="Match Case">Aa</button>
+    <button id="btn-regex" class="find-toggle" title="Use Regular Expression">.*</button>
     <span id="find-count"></span>
     <button id="btn-prev" title="Previous match">↑</button>
     <button id="btn-next" title="Next match">↓</button>
